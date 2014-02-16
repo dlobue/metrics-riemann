@@ -23,5 +23,11 @@
         </dependency>
     </dependencies>
 
+  <repositories>
+    <repository>
+      <id>clojars.org</id>
+      <url>http://clojars.org/repo</url>
+    </repository>
+  </repositories>
 
 </project>
