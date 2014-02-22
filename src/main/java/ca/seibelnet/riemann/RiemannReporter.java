@@ -1,9 +1,6 @@
 package ca.seibelnet.riemann;
 
 import com.aphyr.riemann.client.EventDSL;
-import com.aphyr.riemann.client.ServerError;
-import com.aphyr.riemann.client.MsgTooLargeException;
-import com.aphyr.riemann.Proto;
 import com.codahale.metrics.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -193,38 +190,44 @@ public class RiemannReporter extends ScheduledReporter {
         this.ttl = ttl;
     }
 
-    private EventDSL newEvent(String name, String... components) throws IOException {
+    private interface EventClosure {
+        public EventDSL name(String... components);
+    };
 
-        if (!riemann.client.isConnected()) {
-            log.error("Client not connected.");
-            //TODO: something better -- this kills the reporter.
-            throw new IOException("Client not connected.");
-        }
 
-        EventDSL event = riemann.client.event();
-        if (localHost != null) {
-            event.host(localHost);
-        }
-        if (ttl != null) {
-            event.ttl(ttl);
-        }
-        if (!tags.isEmpty()) {
-            event.tags(tags);
-        }
-        final StringBuilder sb = new StringBuilder();
-        if (this.prefix != null) {
-            sb.append(this.prefix);
-            sb.append(this.separator);
-        }
-        sb.append(name);
+    private EventClosure newEvent(final String metricName, final long timestamp, final String metricType) {
+        final String prefix = this.prefix;
+        final String separator = this.separator;
+        return new EventClosure() {
+            public EventDSL name(String... components) {
+                EventDSL event = riemann.client.event();
+                if (localHost != null) {
+                    event.host(localHost);
+                }
+                if (ttl != null) {
+                    event.ttl(ttl);
+                }
+                if (!tags.isEmpty()) {
+                    event.tags(tags);
+                }
+                final StringBuilder sb = new StringBuilder();
+                if (prefix != null) {
+                    sb.append(prefix);
+                    sb.append(separator);
+                }
+                sb.append(metricName);
 
-        for (String part : components) {
-            sb.append(part);
-            sb.append(this.separator);
-        }
+                for (String part : components) {
+                    sb.append(part);
+                    sb.append(separator);
+                }
 
-        event.service(sb.toString());
-        return event;
+                event.service(sb.toString());
+                event.time(timestamp);
+                event.attribute("metric-type", metricType);
+                return event;
+            }
+        };
     }
 
 
@@ -240,130 +243,118 @@ public class RiemannReporter extends ScheduledReporter {
         // oh it'd be lovely to use Java 7 here
         try {
             riemann.connect();
-            List<Proto.Event> events = new ArrayList<Proto.Event>();
 
             for (Map.Entry<String, Gauge> entry : gauges.entrySet()) {
-                try {
-                    events.add(reportGauge(entry.getKey(), entry.getValue(), timestamp));
-                } catch (IllegalStateException e) {
-                }
+                reportGauge(entry.getKey(), entry.getValue(), timestamp);
             }
 
             for (Map.Entry<String, Counter> entry : counters.entrySet()) {
-                events.add(reportCounter(entry.getKey(), entry.getValue(), timestamp));
+                reportCounter(entry.getKey(), entry.getValue(), timestamp);
             }
 
             for (Map.Entry<String, Histogram> entry : histograms.entrySet()) {
-                events.addAll(reportHistogram(entry.getKey(), entry.getValue(), timestamp));
+                reportHistogram(entry.getKey(), entry.getValue(), timestamp);
             }
 
             for (Map.Entry<String, Meter> entry : meters.entrySet()) {
-                events.addAll(reportMetered(entry.getKey(), entry.getValue(), timestamp));
+                reportMetered(entry.getKey(), entry.getValue(), timestamp);
             }
 
             for (Map.Entry<String, Timer> entry : timers.entrySet()) {
-                events.addAll(reportTimer(entry.getKey(), entry.getValue(), timestamp));
+                reportTimer(entry.getKey(), entry.getValue(), timestamp);
             }
 
-            log.trace("Sending events to riemann");
-            if (riemann.client.sendEventsWithAck(events)) {
-                log.debug("Events ack'd by riemann");
-                log.debug("Completed at {}", System.currentTimeMillis());
-            } else {
-                log.error("Riemann did not acknowledge the events we sent!");
-            }
-
-        } catch (MsgTooLargeException e) {
-            log.error("List of events sent to Riemann was too big", riemann, e);
-        } catch (ServerError e) {
-            log.error("Error sending events to Riemann", riemann, e);
+            log.trace("Flushing events to riemann");
+            riemann.client.flush();
+            log.debug("Completed at {}", System.currentTimeMillis());
         } catch (IOException e) {
             log.warn("Unable to report to Riemann", riemann, e);
         }
     }
 
-    private ArrayList<Proto.Event> reportTimer(String name, Timer timer, long timestamp) throws IOException {
+    private void reportTimer(String name, Timer timer, long timestamp) {
         final Snapshot snapshot = timer.getSnapshot();
+        final EventClosure reporter = newEvent(name, timestamp, timer.getClass().toString());
 
-        ArrayList<Proto.Event> events = new ArrayList<Proto.Event>();
-
-        events.add(newEvent(name, "max").metric(convertDuration(snapshot.getMax())).time(timestamp).build());
-        events.add(newEvent(name, "mean").metric(convertDuration(snapshot.getMean())).time(timestamp).build());
-        events.add(newEvent(name, "min").metric(convertDuration(snapshot.getMin())).time(timestamp).build());
-        events.add(newEvent(name, "stddev").metric(convertDuration(snapshot.getStdDev())).time(timestamp).build());
-        events.add(newEvent(name, "p50").metric(convertDuration(snapshot.getMedian())).time(timestamp).build());
-        events.add(newEvent(name, "p75").metric(convertDuration(snapshot.get75thPercentile())).time(timestamp).build());
-        events.add(newEvent(name, "p95").metric(convertDuration(snapshot.get95thPercentile())).time(timestamp).build());
-        events.add(newEvent(name, "p98").metric(convertDuration(snapshot.get98thPercentile())).time(timestamp).build());
-        events.add(newEvent(name, "p99").metric(convertDuration(snapshot.get99thPercentile())).time(timestamp).build());
-        events.add(newEvent(name, "p999").metric(convertDuration(snapshot.get999thPercentile())).time(timestamp).build());
+        reporter.name("max")
+            .metric(convertDuration(snapshot.getMax())).send();
+        reporter.name("mean")
+            .metric(convertDuration(snapshot.getMean())).send();
+        reporter.name("min")
+            .metric(convertDuration(snapshot.getMin())).send();
+        reporter.name("stddev")
+            .metric(convertDuration(snapshot.getStdDev())).send();
+        reporter.name("p50")
+            .metric(convertDuration(snapshot.getMedian())).send();
+        reporter.name("p75")
+            .metric(convertDuration(snapshot.get75thPercentile())).send();
+        reporter.name("p95")
+            .metric(convertDuration(snapshot.get95thPercentile())).send();
+        reporter.name("p98")
+            .metric(convertDuration(snapshot.get98thPercentile())).send();
+        reporter.name("p99")
+            .metric(convertDuration(snapshot.get99thPercentile())).send();
+        reporter.name("p999")
+            .metric(convertDuration(snapshot.get999thPercentile())).send();
 
         reportMetered(name, timer, timestamp);
-
-        return events;
     }
 
-    private ArrayList<Proto.Event> reportMetered(String name, Metered meter, long timestamp) throws IOException {
+    private void reportMetered(String name, Metered meter, long timestamp) {
+        final EventClosure reporter = newEvent(name, timestamp, meter.getClass().toString());
 
-        ArrayList<Proto.Event> events = new ArrayList<Proto.Event>();
-
-        events.add(newEvent(name, "count").metric(meter.getCount()).time(timestamp).build());
-        events.add(newEvent(name, "m1_rate").metric(convertRate(meter.getOneMinuteRate())).time(timestamp).build());
-        events.add(newEvent(name, "m5_rate").metric(convertRate(meter.getFiveMinuteRate())).time(timestamp).build());
-        events.add(newEvent(name, "m15_rate").metric(convertRate(meter.getFifteenMinuteRate())).time(timestamp).build());
-        events.add(newEvent(name, "mean_rate").metric(convertRate(meter.getMeanRate())).time(timestamp).build());
-
-        return events;
+        reporter.name("count")
+            .metric(meter.getCount()).send();
+        reporter.name("m1_rate")
+            .metric(convertRate(meter.getOneMinuteRate())).send();
+        reporter.name("m5_rate")
+            .metric(convertRate(meter.getFiveMinuteRate())).send();
+        reporter.name("m15_rate")
+            .metric(convertRate(meter.getFifteenMinuteRate())).send();
+        reporter.name("mean_rate")
+            .metric(convertRate(meter.getMeanRate())).send();
     }
 
-    private List<Proto.Event> reportHistogram(String name, Histogram histogram, long timestamp) throws IOException {
+    private void reportHistogram(String name, Histogram histogram, long timestamp) {
         final Snapshot snapshot = histogram.getSnapshot();
+        final EventClosure reporter = newEvent(name, timestamp, histogram.getClass().toString());
 
-        ArrayList<Proto.Event> events = new ArrayList<Proto.Event>();
-
-        events.add(newEvent(name, "count").metric(histogram.getCount()).time(timestamp).build());
-        events.add(newEvent(name, "max").metric(snapshot.getMax()).time(timestamp).build());
-        events.add(newEvent(name, "mean").metric(snapshot.getMean()).time(timestamp).build());
-        events.add(newEvent(name, "min").metric(snapshot.getMin()).time(timestamp).build());
-        events.add(newEvent(name, "stddev").metric(snapshot.getStdDev()).time(timestamp).build());
-        events.add(newEvent(name, "p50").metric(snapshot.getMedian()).time(timestamp).build());
-        events.add(newEvent(name, "p75").metric(snapshot.get75thPercentile()).time(timestamp).build());
-        events.add(newEvent(name, "p95").metric(snapshot.get95thPercentile()).time(timestamp).build());
-        events.add(newEvent(name, "p98").metric(snapshot.get98thPercentile()).time(timestamp).build());
-        events.add(newEvent(name, "p99").metric(snapshot.get99thPercentile()).time(timestamp).build());
-        events.add(newEvent(name, "p999").metric(snapshot.get999thPercentile()).time(timestamp).build());
-
-        return events;
-
+        reporter.name("count").metric(histogram.getCount()).send();
+        reporter.name("max").metric(snapshot.getMax()).send();
+        reporter.name("mean").metric(snapshot.getMean()).send();
+        reporter.name("min").metric(snapshot.getMin()).send();
+        reporter.name("stddev").metric(snapshot.getStdDev()).send();
+        reporter.name("p50").metric(snapshot.getMedian()).send();
+        reporter.name("p75").metric(snapshot.get75thPercentile()).send();
+        reporter.name("p95").metric(snapshot.get95thPercentile()).send();
+        reporter.name("p98").metric(snapshot.get98thPercentile()).send();
+        reporter.name("p99").metric(snapshot.get99thPercentile()).send();
+        reporter.name("p999").metric(snapshot.get999thPercentile()).send();
     }
 
-    private Proto.Event reportCounter(String name, Counter counter, long timestamp) throws IOException {
-        return newEvent(name, "count").metric(counter.getCount()).time(timestamp).build();
+    private void reportCounter(String name, Counter counter, long timestamp) {
+        final EventClosure reporter = newEvent(name, timestamp, counter.getClass().toString());
+        reporter.name("count").metric(counter.getCount()).send();
     }
 
-    private Proto.Event reportGauge(String name, Gauge gauge, long timestamp) throws IOException, IllegalStateException {
+    private void reportGauge(String name, Gauge gauge, long timestamp) {
+        final EventClosure reporter = newEvent(name, timestamp, gauge.getClass().toString());
         Object o = gauge.getValue();
 
         if (o instanceof Float) {
-            return newEvent(name).metric((Float) o).time(timestamp).build();
+            reporter.name().metric((Float) o).send();
         } else if (o instanceof Double) {
-            return newEvent(name).metric((Double) o).time(timestamp).build();
+            reporter.name().metric((Double) o).send();
         } else if (o instanceof Byte) {
-            return newEvent(name).metric((Byte) o).time(timestamp).build();
+            reporter.name().metric((Byte) o).send();
         } else if (o instanceof Short) {
-            return newEvent(name).metric((Short) o).time(timestamp).build();
+            reporter.name().metric((Short) o).send();
         } else if (o instanceof Integer) {
-            return newEvent(name).metric((Integer) o).time(timestamp).build();
+            reporter.name().metric((Integer) o).send();
         } else if (o instanceof Long) {
-            return newEvent(name).metric((Long) o).time(timestamp).build();
+            reporter.name().metric((Long) o).send();
         } else {
-            log.warn("Gauge was of an unknown type: {}", o.getClass().toString());
-            throw new IllegalStateException("Guage was of an unknown type: {}", o.getClass().toString());
-            //return null;
+            log.debug("Gauge was of an unknown type: {}", o.getClass().toString());
         }
-
     }
-
-
-
 }
