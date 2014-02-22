@@ -7,6 +7,8 @@ import com.aphyr.riemann.client.RiemannBatchClient;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.net.UnknownHostException;
+
 
 public class Riemann implements Closeable {
 
@@ -15,10 +17,10 @@ public class Riemann implements Closeable {
 
     AbstractRiemannClient client;
 
-    public Riemann(String host, Integer port) throws IOException {
+    public Riemann(String host, Integer port) throws IOException, UnknownHostException {
         this(host, port, 10);
     }
-    public Riemann(String host, Integer port, int batchSize) throws IOException {
+    public Riemann(String host, Integer port, int batchSize) throws IOException, UnknownHostException {
         this.riemannHost = host;
         this.riemannPort = port;
         this.client = new RiemannBatchClient(batchSize,
