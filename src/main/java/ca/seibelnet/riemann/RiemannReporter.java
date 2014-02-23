@@ -218,8 +218,8 @@ public class RiemannReporter extends ScheduledReporter {
                 sb.append(metricName);
 
                 for (String part : components) {
-                    sb.append(part);
                     sb.append(separator);
+                    sb.append(part);
                 }
 
                 event.service(sb.toString());
