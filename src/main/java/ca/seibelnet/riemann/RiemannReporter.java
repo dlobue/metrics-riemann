@@ -274,7 +274,7 @@ public class RiemannReporter extends ScheduledReporter {
 
     private void reportTimer(String name, Timer timer, long timestamp) {
         final Snapshot snapshot = timer.getSnapshot();
-        final EventClosure reporter = newEvent(name, timestamp, timer.getClass().toString());
+        final EventClosure reporter = newEvent(name, timestamp, timer.getClass().getSimpleName());
 
         reporter.name("max")
             .metric(convertDuration(snapshot.getMax())).send();
@@ -301,7 +301,7 @@ public class RiemannReporter extends ScheduledReporter {
     }
 
     private void reportMetered(String name, Metered meter, long timestamp) {
-        final EventClosure reporter = newEvent(name, timestamp, meter.getClass().toString());
+        final EventClosure reporter = newEvent(name, timestamp, meter.getClass().getSimpleName());
 
         reporter.name("count")
             .metric(meter.getCount()).send();
@@ -317,7 +317,7 @@ public class RiemannReporter extends ScheduledReporter {
 
     private void reportHistogram(String name, Histogram histogram, long timestamp) {
         final Snapshot snapshot = histogram.getSnapshot();
-        final EventClosure reporter = newEvent(name, timestamp, histogram.getClass().toString());
+        final EventClosure reporter = newEvent(name, timestamp, histogram.getClass().getSimpleName());
 
         reporter.name("count").metric(histogram.getCount()).send();
         reporter.name("max").metric(snapshot.getMax()).send();
@@ -333,12 +333,12 @@ public class RiemannReporter extends ScheduledReporter {
     }
 
     private void reportCounter(String name, Counter counter, long timestamp) {
-        final EventClosure reporter = newEvent(name, timestamp, counter.getClass().toString());
+        final EventClosure reporter = newEvent(name, timestamp, counter.getClass().getSimpleName());
         reporter.name("count").metric(counter.getCount()).send();
     }
 
     private void reportGauge(String name, Gauge gauge, long timestamp) {
-        final EventClosure reporter = newEvent(name, timestamp, gauge.getClass().toString());
+        final EventClosure reporter = newEvent(name, timestamp, gauge.getClass().getSimpleName());
         Object o = gauge.getValue();
 
         if (o instanceof Float) {
